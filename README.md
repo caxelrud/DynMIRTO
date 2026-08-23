@@ -5,20 +5,28 @@ Distribution/blend Optimization Tool). Given blendstock components (cost,
 availability, quality properties) and product specs (demand, quality
 ranges), it computes the minimum-cost blend recipe that meets every spec.
 
-v1 scope is single-period recipe optimization (an LP solved with
-[JuMP.jl](https://jump.dev) + [HiGHS](https://highs.dev)). See
+v1 is single-period recipe optimization; v2 adds multi-period scheduling
+on top — tanks with inventory that evolves via scheduled receipts and
+blending draws over a horizon. Both are LPs solved with
+[JuMP.jl](https://jump.dev) + [HiGHS](https://highs.dev). See
 [`DESIGN.md`](DESIGN.md) for the full design, including how non-linear
 blending properties (RON, RVP, ...) are handled via blending indices, and
-what's deliberately out of scope for v1 (multi-period scheduling, tank
-dynamics).
+v2's key simplification (fixed-quality tanks — see DESIGN.md section 9.1
+for why, and what's still out of scope: real in-tank quality mixing,
+procurement optimization).
 
 ## Quickstart
 
 ```sh
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. test/runtests.jl
+
+# v1: single-period blend optimization
 julia --project=. scripts/run_scenario.jl data/examples/regular_unleaded.json
 julia --project=. scripts/run_scenario.jl data/examples/multi_grade.json
+
+# v2: multi-period scheduling (tanks, receipts, demand over a horizon)
+julia --project=. scripts/run_schedule.jl data/examples/schedule_example.json
 ```
 
 ## Interactive notebook
@@ -69,21 +77,24 @@ automatically, so it can drift from the notebook over time.
 ```
 src/
   DynMIRTO.jl     # module entry point
-  Types.jl        # Component, Product, PropertySpec, BlendRecipe
+  Types.jl        # Component, Product, PropertySpec, BlendRecipe (v1)
   BlendIndices.jl # pluggable blending-index registry (RON, RVP, ...)
-  Optimizer.jl    # builds & solves the JuMP/HiGHS LP
-  ScenarioIO.jl   # load a scenario from JSON
-  Report.jl       # pretty-print a solved recipe
+  Optimizer.jl    # builds & solves the v1 (single-period) JuMP/HiGHS LP
+  Scheduling.jl   # Tank, ScheduledProduct; builds & solves the v2 (multi-period) LP
+  ScenarioIO.jl   # load a v1 scenario, or a v2 schedule, from JSON
+  Report.jl       # pretty-print a solved recipe or schedule
 scripts/
-  run_scenario.jl # CLI: run a scenario file end to end
+  run_scenario.jl # CLI: run a v1 scenario file end to end
+  run_schedule.jl # CLI: run a v2 schedule file end to end
 notebooks/
   blend_explorer.jl            # interactive Pluto notebook, linked to src/ (see above)
   blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
 test/
   runtests.jl
 data/examples/
-  regular_unleaded.json  # single product, 4 components
-  multi_grade.json       # two products sharing a component pool
+  regular_unleaded.json  # v1: single product, 4 components
+  multi_grade.json       # v1: two products sharing a component pool
+  schedule_example.json  # v2: 4 tanks, scheduled receipts, 4-period horizon
 ```
 
 ## Status

@@ -1,0 +1,44 @@
+{
+  "periods": 4,
+  "components": [
+    {
+      "id": "BUT", "name": "Butane", "cost": 45.0,
+      "properties": {"RON": 92.0, "RVP": 52.0, "sulfur_ppm": 0.0, "benzene_pct": 0.0}
+    },
+    {
+      "id": "REF", "name": "Reformate", "cost": 58.0,
+      "properties": {"RON": 98.0, "RVP": 3.0, "sulfur_ppm": 5.0, "benzene_pct": 1.8}
+    },
+    {
+      "id": "FCC", "name": "FCC Gasoline", "cost": 52.0,
+      "properties": {"RON": 91.0, "RVP": 5.0, "sulfur_ppm": 300.0, "benzene_pct": 0.5}
+    },
+    {
+      "id": "ALK", "name": "Alkylate", "cost": 60.0,
+      "properties": {"RON": 96.0, "RVP": 5.0, "sulfur_ppm": 1.0, "benzene_pct": 0.0}
+    }
+  ],
+  "tanks": [
+    {"id": "T-BUT", "component_id": "BUT", "capacity_min": 0, "capacity_max": 400, "initial_inventory": 150},
+    {"id": "T-REF", "component_id": "REF", "capacity_min": 200, "capacity_max": 3000, "initial_inventory": 1200},
+    {"id": "T-FCC", "component_id": "FCC", "capacity_min": 100, "capacity_max": 2500, "initial_inventory": 1800},
+    {"id": "T-ALK", "component_id": "ALK", "capacity_min": 100, "capacity_max": 2000, "initial_inventory": 900}
+  ],
+  "receipts": [
+    {"tank_id": "T-REF", "period": 3, "volume": 1500},
+    {"tank_id": "T-FCC", "period": 2, "volume": 800},
+    {"tank_id": "T-ALK", "period": 3, "volume": 600}
+  ],
+  "products": [
+    {
+      "id": "REG", "name": "Regular Unleaded",
+      "specs": {
+        "RON": {"min": 87.0, "blend_rule": "index"},
+        "RVP": {"max": 9.0, "blend_rule": "index"},
+        "sulfur_ppm": {"max": 80.0, "blend_rule": "linear"},
+        "benzene_pct": {"max": 1.3, "blend_rule": "linear"}
+      },
+      "demand": {"1": 500, "2": 500, "3": 500, "4": 500}
+    }
+  ]
+}

@@ -162,12 +162,119 @@ julia-blend-optimizer/
    property (RON) round-tripping correctly, a known-optimal toy scenario,
    and an intentionally infeasible scenario.
 
-## 8. Roadmap beyond v1 (not building yet)
+## 8. Roadmap beyond v1
 
-- Multi-period scheduling (tank inventories evolving over time, receipts/
-  shipments) — this is GDOT's other major half and a much bigger model
-  (time-indexed LP/MILP, tank blending-in-transit dynamics).
+- ~~Multi-period scheduling~~ — see v2 below.
 - Nonlinear/interaction blending corrections beyond simple indices.
 - A small web front-end for scenario editing (could reuse this session's
   Artifact tooling for a demo UI once the engine is solid).
 - Sensitivity/what-if reporting, batch scenario comparison.
+- Procurement optimization (v2 treats receipts as fixed input; deciding
+  *when/how much* to receive, under contract/cost terms, is a natural
+  follow-on once v2 is solid).
+
+## 9. v2: Multi-period scheduling
+
+This is GDOT's other major half: instead of one snapshot in time, plan a
+blend schedule across a horizon of periods (e.g. days), where component
+availability comes from **tanks** whose inventory evolves period to period
+via scheduled **receipts** (deliveries) and consumption (blending draws).
+
+### 9.1 Key simplification: fixed-quality tanks
+
+Real terminal/refinery scheduling has to handle a tank's quality *changing*
+as new receipts mix with existing inventory (a bilinear, non-convex
+problem — the hard part of real GDOT-class scheduling, usually handled
+with MINLP or sequential-LP heuristics). v2 deliberately sidesteps this:
+**each tank holds one component whose quality properties are fixed** (set
+once on the `Component`, same as v1); receipts change *how much* is in the
+tank, never *what quality* it is. This keeps the whole model a clean LP —
+same solver, same tractability as v1 — while still answering the real
+scheduling question ("given tank capacity and a receipts calendar, what's
+the optimal per-period blend plan to meet demand over time without running
+a tank dry or overflowing it"). Tank-quality-mixing dynamics are flagged as
+future work, not built now.
+
+A second simplification: **one tank per component** (no tank-selection
+sub-problem when several tanks could hold the same stock). And receipts are
+**fixed input data**, not a decision — procurement timing/quantity
+optimization is future work (see roadmap).
+
+### 9.2 Domain model additions
+
+```
+Tank
+  id::String
+  component_id::String     # which Component's quality this tank holds
+  capacity_min::Float64     # e.g. minimum heel that must stay in the tank
+  capacity_max::Float64
+  initial_inventory::Float64
+
+ScheduledProduct   (like Product, but demand varies by period)
+  id, name, price, specs, eligible_components   # same as Product
+  demand::Dict{Int,Float64}   # period => volume required (periods w/o an
+                               # entry have zero demand)
+
+receipts::Dict{Tuple{String,Int},Float64}   # (tank_id, period) => volume
+                                              # delivered at the start of
+                                              # that period
+```
+
+`Component.available`/`min_available` are **ignored** in the scheduling
+model — a tank's dynamic inventory governs availability instead. This is
+called out in the code, not silently overloaded.
+
+### 9.3 Optimization formulation
+
+Decision variables: `x[c,p,t]` (component volume used, per product, per
+period — same as v1's `x[c,p]` with a time index) and `inv[tank,t]` for
+`t = 1..T` (`inv[tank,0]` is fixed data: `initial_inventory`).
+
+```
+minimize  sum(cost[c] * x[c,p,t] for c,p,t)
+
+subject to, for each period t = 1..T:
+  sum(x[c,p,t] for c) == demand[p,t]                for each product p
+  inv[tank,t] == inv[tank,t-1] + receipts[tank,t]
+                - sum(x[c,p,t] for p, where c == tank.component_id)
+  capacity_min[tank] <= inv[tank,t] <= capacity_max[tank]
+  for each property spec (same index-space handling as v1):
+      lo*demand[p,t] <= sum(val[c,p]*x[c,p,t]) <= hi*demand[p,t]
+  x[c,p,t] >= 0
+```
+
+This is the same LP structure as v1, just replicated per period and linked
+across periods by the inventory balance equation — still a pure LP (no
+integer variables, no bilinear terms), solvable directly by HiGHS.
+
+### 9.4 Module additions
+
+```
+src/
+  Scheduling.jl   # Tank, ScheduledProduct, optimize_schedule, prevalidation
+scripts/
+  run_schedule.jl # CLI: run a multi-period scenario end to end
+data/examples/
+  schedule_example.json   # small horizon, 2 tanks, receipts, 1 product
+test/
+  test_scheduling.jl
+```
+
+`ScenarioIO.jl` gains a `load_schedule(path)` loading a JSON shape parallel
+to the v1 scenario format (components, tanks, receipts, products-with-
+per-period-demand, horizon length).
+
+### 9.5 Acceptance criteria (v2)
+
+1. A tank that would run below `capacity_min` or above `capacity_max` in
+   some period is caught and reported by name/period, not just a bare
+   solver infeasibility code.
+2. A hand-verifiable 2-period test: a tank starts with just enough
+   inventory for period 1, a receipt arrives before period 2, and the
+   optimal schedule matches a hand calculation.
+3. A capacity-binding test: demand forces a tank to draw down to its
+   `capacity_min` in some period (the binding constraint is visible in the
+   result).
+4. Reuses v1's `Component`/`PropertySpec`/blending-index machinery
+   unchanged — no duplication of the blend math, only the new tank/time
+   layer is new code.
