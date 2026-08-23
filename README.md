@@ -87,6 +87,10 @@ julia -e 'using Pkg; Pkg.add("Pluto")'
 julia -e 'using Pluto; Pluto.run(notebook="notebooks/schedule_explorer.jl")'
 ```
 
+`notebooks/schedule_explorer.pdf` is a print-out (same caveats as the
+blend explorer's: a snapshot at default slider values, not auto-
+regenerated).
+
 ## Layout
 
 ```
