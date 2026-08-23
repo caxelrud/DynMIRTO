@@ -1,0 +1,31 @@
+{
+  "components": [
+    {
+      "id": "BUT", "name": "Butane", "cost": 45.0, "available": 200,
+      "properties": {"RON": 92.0, "RVP": 52.0, "sulfur_ppm": 0.0, "benzene_pct": 0.0}
+    },
+    {
+      "id": "REF", "name": "Reformate", "cost": 58.0, "available": 3000,
+      "properties": {"RON": 98.0, "RVP": 3.0, "sulfur_ppm": 5.0, "benzene_pct": 1.8}
+    },
+    {
+      "id": "FCC", "name": "FCC Gasoline", "cost": 52.0, "available": 3000,
+      "properties": {"RON": 91.0, "RVP": 5.0, "sulfur_ppm": 300.0, "benzene_pct": 0.5}
+    },
+    {
+      "id": "ALK", "name": "Alkylate", "cost": 60.0, "available": 2000,
+      "properties": {"RON": 96.0, "RVP": 5.0, "sulfur_ppm": 1.0, "benzene_pct": 0.0}
+    }
+  ],
+  "products": [
+    {
+      "id": "REG", "name": "Regular Unleaded", "demand": 1000,
+      "specs": {
+        "RON": {"min": 87.0, "blend_rule": "index"},
+        "RVP": {"max": 9.0, "blend_rule": "index"},
+        "sulfur_ppm": {"max": 80.0, "blend_rule": "linear"},
+        "benzene_pct": {"max": 1.3, "blend_rule": "linear"}
+      }
+    }
+  ]
+}
