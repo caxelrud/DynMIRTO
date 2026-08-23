@@ -44,6 +44,21 @@ be regenerated with:
 julia -e 'using Pkg; Pkg.add("PlutoSliderServer"); using PlutoSliderServer; PlutoSliderServer.export_notebook("notebooks/blend_explorer.jl")'
 ```
 
+### Running it without installing anything (e.g. from a phone)
+
+`notebooks/blend_explorer_standalone.jl` is the same idea, but with the
+`Types`/`BlendIndices`/`Optimizer` logic and one example scenario inlined
+directly into the notebook instead of loaded from `src/`/`data/`. That
+means it only depends on registered packages (JuMP, HiGHS, PlutoUI), so
+Pluto's own "Edit or run this notebook" → *Run with Binder* button works
+with zero local setup — including from a phone browser. Open the exported
+HTML (or the notebook via `Pluto.run`), click that button, and wait 1–3
+minutes for a fresh cloud Julia session to start.
+
+It is **not auto-synced** with `src/` — if the core logic changes there,
+re-copy it into this file by hand. Use `blend_explorer.jl` (above) for
+day-to-day development against the live package.
+
 ## Layout
 
 ```
@@ -57,7 +72,8 @@ src/
 scripts/
   run_scenario.jl # CLI: run a scenario file end to end
 notebooks/
-  blend_explorer.jl # interactive Pluto notebook (see above)
+  blend_explorer.jl            # interactive Pluto notebook, linked to src/ (see above)
+  blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
 test/
   runtests.jl
 data/examples/
