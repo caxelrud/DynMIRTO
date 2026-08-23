@@ -59,6 +59,11 @@ It is **not auto-synced** with `src/` — if the core logic changes there,
 re-copy it into this file by hand. Use `blend_explorer.jl` (above) for
 day-to-day development against the live package.
 
+`notebooks/blend_explorer_standalone.pdf` is a print-out of this notebook
+(captured from an actual running session, default slider values) for a
+quick look without running anything — it's a snapshot, not regenerated
+automatically, so it can drift from the notebook over time.
+
 ## Layout
 
 ```
