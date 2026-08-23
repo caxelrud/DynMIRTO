@@ -21,6 +21,29 @@ julia --project=. scripts/run_scenario.jl data/examples/regular_unleaded.json
 julia --project=. scripts/run_scenario.jl data/examples/multi_grade.json
 ```
 
+## Interactive notebook
+
+`notebooks/blend_explorer.jl` is a [Pluto.jl](https://plutojl.org) notebook:
+sliders for component cost/availability and product specs, with the blend
+recipe (bar chart, quality-vs-spec table, and the CLI's own text report)
+recomputing live as you move them. It develops the `DynMIRTO` package
+straight from `src/` (via `Pkg.develop`) into its own throwaway environment,
+so it always reflects the current code and never touches your global Julia
+install.
+
+```sh
+julia -e 'using Pkg; Pkg.add("Pluto")'
+julia -e 'using Pluto; Pluto.run(notebook="notebooks/blend_explorer.jl")'
+```
+
+The first run installs the notebook's own dependencies (a minute or two);
+after that it opens instantly. A static, non-interactive HTML snapshot can
+be regenerated with:
+
+```sh
+julia -e 'using Pkg; Pkg.add("PlutoSliderServer"); using PlutoSliderServer; PlutoSliderServer.export_notebook("notebooks/blend_explorer.jl")'
+```
+
 ## Layout
 
 ```
@@ -33,6 +56,8 @@ src/
   Report.jl       # pretty-print a solved recipe
 scripts/
   run_scenario.jl # CLI: run a scenario file end to end
+notebooks/
+  blend_explorer.jl # interactive Pluto notebook (see above)
 test/
   runtests.jl
 data/examples/
