@@ -72,6 +72,21 @@ day-to-day development against the live package.
 quick look without running anything — it's a snapshot, not regenerated
 automatically, so it can drift from the notebook over time.
 
+### Schedule Explorer (v2)
+
+`notebooks/schedule_explorer.jl` is the same idea for the multi-period
+scheduler: sliders for demand, each scheduled receipt, the octane spec,
+and the butane tank's capacity. Recomputing live are a tank-level grid
+(one row per tank, one column per period, with a pink cell wherever a
+tank is at or near its floor) and a per-period recipe table. It's linked
+to `src/` the same way as `blend_explorer.jl`, so it always reflects the
+current scheduling code.
+
+```sh
+julia -e 'using Pkg; Pkg.add("Pluto")'
+julia -e 'using Pluto; Pluto.run(notebook="notebooks/schedule_explorer.jl")'
+```
+
 ## Layout
 
 ```
@@ -87,8 +102,9 @@ scripts/
   run_scenario.jl # CLI: run a v1 scenario file end to end
   run_schedule.jl # CLI: run a v2 schedule file end to end
 notebooks/
-  blend_explorer.jl            # interactive Pluto notebook, linked to src/ (see above)
+  blend_explorer.jl            # interactive Pluto notebook (v1), linked to src/ (see above)
   blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
+  schedule_explorer.jl         # interactive Pluto notebook (v2), linked to src/
 test/
   runtests.jl
 data/examples/
