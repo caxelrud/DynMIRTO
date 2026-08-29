@@ -1,0 +1,33 @@
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Julia ${{ matrix.julia-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.9 matches Project.toml's declared minimum compat; "1" resolves
+        # to the latest stable 1.x release. Both verified locally before
+        # this workflow was added (see DESIGN.md section 12).
+        julia-version: ['1.9', '1']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Run test suite
+        run: julia --project=. test/runtests.jl

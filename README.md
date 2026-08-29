@@ -1,5 +1,7 @@
 # DynMIRTO
 
+[![CI](https://github.com/caxelrud/DynMIRTO/actions/workflows/ci.yml/badge.svg)](https://github.com/caxelrud/DynMIRTO/actions/workflows/ci.yml)
+
 A Julia optimization engine exploring the ideas behind AspenTech's GDOT
 ("Generic Dynamic Optimization Technology", from Apex Optimisation,
 acquired by AspenTech in 2018) — corrected here from this project's
@@ -175,6 +177,8 @@ v2 (tanks/scheduling) isn't connected yet — section 11.6.
 ## Layout
 
 ```
+.github/workflows/
+  ci.yml                # runs the full test suite on push/PR, Julia 1.9 + latest (section 12)
 src/
   DynMIRTO.jl           # module entry point
   Types.jl              # Component, Product, PropertySpec, BlendRecipe (v1)

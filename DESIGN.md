@@ -588,3 +588,23 @@ it to v2 (multi-period scheduling with tanks) is the natural next step
 `Component`'s flat `available`, and the shadow price would come from
 v2's per-period, per-tank capacity constraints instead of v1's
 per-component availability constraint.
+
+## 12. Continuous integration
+
+`.github/workflows/ci.yml` runs the full test suite (237 tests as of
+this writing) on every push and pull request to `main`, against two
+Julia versions: `1.9` (matching `Project.toml`'s declared minimum
+`[compat]`) and `1` (resolves to the latest stable 1.x release).
+
+The `1.9` entry specifically closes a real gap: that compat bound was
+written in the very first commit and never actually tested against
+before now — every local run throughout this project used whatever
+`juliaup` had installed, which was always a current 1.12.x. Before
+adding the workflow, Julia 1.9.4 was installed locally via `juliaup add
+1.9` and the full suite run against it directly (not just assumed to
+work because the number was written down); it passed unmodified. The
+workflow itself was validated with `actionlint` (not just visual review
+or generic YAML parsing, which mis-parses the bare `on:` key as a
+boolean under standard YAML rules — GitHub's own parser special-cases
+it, but the key is quoted here as `"on":` regardless, to avoid relying
+on that special-casing for other tooling that reads the file).
