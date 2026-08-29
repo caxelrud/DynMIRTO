@@ -52,6 +52,49 @@
         @test any(occursin("below the min spec", d) for d in result.diagnostics)
     end
 
+    @testset "shadow prices match hand-derived LP duality" begin
+        # Cheaper AND better-quality component (REF) is scarce (available=70,
+        # binding); pricier, worse FILL makes up the rest. Hand-derived: since
+        # cost = 50*x_REF + 60*(100-x_REF) = 6000 - 10*x_REF is decreasing in
+        # x_REF, the LP pushes x_REF to its cap; at x_REF=70 the RON spec
+        # (90.5 >= 90) is already slack, so only availability binds.
+        # Relaxing the cap by 1 unit saves exactly $10 (verified independently
+        # against raw JuMP before writing this test).
+        ref = Component("REF", "Reformate", 50.0, 70.0; properties=Dict(:RON => 95.0))
+        fill_ = Component("FILL", "Filler", 60.0, 1000.0; properties=Dict(:RON => 80.0))
+        p = Product("P", "Test", 100.0; specs=Dict(:RON => PropertySpec(; min=90.0, blend_rule=:linear)))
+
+        result = optimize_blend([ref, fill_], [p])
+        @test result.status == :optimal
+        recipe = result.recipes["P"]
+        @test isapprox(recipe.volumes["REF"], 70.0; atol=1e-6)
+        @test isapprox(recipe.cost, 5300.0; atol=1e-3)
+        @test isapprox(result.component_shadow_prices["REF"], 10.0; atol=1e-3)
+        @test isapprox(result.component_shadow_prices["FILL"], 0.0; atol=1e-6)  # not binding
+        @test isapprox(recipe.spec_shadow_prices[:RON], 0.0; atol=1e-6)  # RON slack (90.5 >= 90)
+
+        # Max-type spec: cheap high-sulfur vs. pricier low-sulfur, sulfur <= 80
+        # binds. Hand-derived (and cross-checked against raw JuMP): relaxing
+        # the max by 1 ppm saves ~$0.0678 per unit of demand, i.e. ~$6.78 total.
+        cheap = Component("LOW", "High sulfur", 40.0, 1000.0; properties=Dict(:sulfur_ppm => 300.0))
+        pricey = Component("HIGH", "Low sulfur", 60.0, 1000.0; properties=Dict(:sulfur_ppm => 5.0))
+        p2 = Product("P2", "Test", 100.0;
+            specs=Dict(:sulfur_ppm => PropertySpec(; max=80.0, blend_rule=:linear)))
+        result2 = optimize_blend([cheap, pricey], [p2])
+        @test result2.status == :optimal
+        @test isapprox(result2.recipes["P2"].spec_shadow_prices[:sulfur_ppm], 6.7797; atol=1e-3)
+
+        # Min-type spec: cheap low-RON vs. pricier high-RON, RON >= 90 binds.
+        # Hand-derived (and cross-checked against raw JuMP): tightening the
+        # min by 1 RON point costs ~$153.85 total (demand=100).
+        low_ron = Component("A", "Low RON", 40.0, 1000.0; properties=Dict(:RON => 85.0))
+        high_ron = Component("B", "High RON", 60.0, 1000.0; properties=Dict(:RON => 98.0))
+        p3 = Product("P3", "Test", 100.0; specs=Dict(:RON => PropertySpec(; min=90.0, blend_rule=:linear)))
+        result3 = optimize_blend([low_ron, high_ron], [p3])
+        @test result3.status == :optimal
+        @test isapprox(result3.recipes["P3"].spec_shadow_prices[:RON], 153.846; atol=1e-2)
+    end
+
     @testset "multi-product shared component pool" begin
         shared = Component("S", "Shared stock", 10.0, 150.0; properties=Dict(:RON => 95.0))
         cheap = Component("C", "Cheap filler", 5.0, 1000.0; properties=Dict(:RON => 80.0))

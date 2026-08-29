@@ -18,11 +18,15 @@ end
 
 Outcome of `optimize_blend`. `status` is `:optimal` or `:infeasible`.
 `recipes` maps product id -> `BlendRecipe` (empty when infeasible).
-`diagnostics` holds human-readable notes explaining an infeasible result.
+`component_shadow_prices` maps component id -> the economic value of one
+more unit of that component's availability (zero if its availability
+constraint isn't binding). `diagnostics` holds human-readable notes
+explaining an infeasible result.
 """
 struct OptimizationResult
     status::Symbol
     recipes::Dict{String,BlendRecipe}
+    component_shadow_prices::Dict{String,Float64}
     diagnostics::Vector{String}
 end
 
@@ -48,7 +52,7 @@ function optimize_blend(components::Vector{Component}, products::Vector{Product}
 
     diagnostics = _prevalidate(components, products, pairs)
     if !isempty(diagnostics)
-        return OptimizationResult(:infeasible, Dict{String,BlendRecipe}(), diagnostics)
+        return OptimizationResult(:infeasible, Dict{String,BlendRecipe}(), Dict{String,Float64}(), diagnostics)
     end
 
     model = Model(optimizer)
@@ -69,17 +73,21 @@ function optimize_blend(components::Vector{Component}, products::Vector{Product}
         @constraint(model, sum(vars) == p.demand)
     end
 
-    # Component availability (shared across all products it feeds).
+    # Component availability (shared across all products it feeds). Keep
+    # the constraint reference so we can read its shadow price after solving.
+    avail_constraints = Dict{String,JuMP.ConstraintRef}()
     for c in components
         vars = [x[(c.id, p.id)] for p in products if haskey(x, (c.id, p.id))]
         isempty(vars) && continue
-        @constraint(model, sum(vars) <= c.available)
+        avail_constraints[c.id] = @constraint(model, sum(vars) <= c.available)
         if c.min_available > 0
             @constraint(model, sum(vars) >= c.min_available)
         end
     end
 
-    # Quality specs, evaluated in solver (index) space.
+    # Quality specs, evaluated in solver (index) space. Same idea: keep
+    # each binding constraint's reference for its shadow price.
+    spec_constraints = Dict{Tuple{String,Symbol},Vector{JuMP.ConstraintRef}}()
     for p in products, (prop, spec) in p.specs
         vars_vals = Tuple{JuMP.VariableRef,Float64}[]
         for c in components
@@ -91,14 +99,16 @@ function optimize_blend(components::Vector{Component}, products::Vector{Product}
         end
         isempty(vars_vals) && continue
         weighted = sum(v * val for (v, val) in vars_vals)
+        cons = JuMP.ConstraintRef[]
         if spec.min !== nothing
             lo = _to_solver_space(spec.blend_rule, prop, spec.min)
-            @constraint(model, weighted >= lo * p.demand)
+            push!(cons, @constraint(model, weighted >= lo * p.demand))
         end
         if spec.max !== nothing
             hi = _to_solver_space(spec.blend_rule, prop, spec.max)
-            @constraint(model, weighted <= hi * p.demand)
+            push!(cons, @constraint(model, weighted <= hi * p.demand))
         end
+        spec_constraints[(p.id, prop)] = cons
     end
 
     @objective(model, Min, sum(comp_by_id[cid].cost * v for ((cid, _), v) in x))
@@ -110,8 +120,18 @@ function optimize_blend(components::Vector{Component}, products::Vector{Product}
         note = "Solver returned $(status). This can mean the specs/availability are " *
                "infeasible together, or (rarely) numerical trouble. Run with a looser " *
                "spec or more component availability to isolate which constraint binds."
-        return OptimizationResult(:infeasible, Dict{String,BlendRecipe}(), [note])
+        return OptimizationResult(:infeasible, Dict{String,BlendRecipe}(), Dict{String,Float64}(), [note])
     end
+
+    # -shadow_price gives the same economically-signed quantity for both
+    # constraint directions: "value of one more unit" for a <= availability
+    # bound, "cost of tightening by one unit" for either a min or max spec
+    # bound -- verified empirically against hand-derived LPs before relying
+    # on it here (see DESIGN.md section 11.2).
+    component_shadow_prices = Dict(
+        cid => haskey(avail_constraints, cid) ? -shadow_price(avail_constraints[cid]) : 0.0
+        for cid in keys(comp_by_id)
+    )
 
     recipes = Dict{String,BlendRecipe}()
     for p in products
@@ -136,10 +156,19 @@ function optimize_blend(components::Vector{Component}, products::Vector{Product}
             resulting[prop] = _from_solver_space(rule, prop, weighted / p.demand)
         end
 
-        recipes[p.id] = BlendRecipe(p.id, volumes, fractions, resulting, cost)
+        spec_shadow_prices = Dict(
+            # The constraint's raw RHS is `spec_value * demand`, so its dual
+            # is "per unit of demand"; multiply by demand to get the more
+            # meaningful "cost of tightening the spec by one whole unit
+            # (one RON point, one ppm, ...)".
+            prop => p.demand * sum(-shadow_price(con) for con in cons)
+            for ((pid, prop), cons) in spec_constraints if pid == p.id
+        )
+
+        recipes[p.id] = BlendRecipe(p.id, volumes, fractions, resulting, cost, spec_shadow_prices)
     end
 
-    return OptimizationResult(:optimal, recipes, String[])
+    return OptimizationResult(:optimal, recipes, component_shadow_prices, String[])
 end
 
 """

@@ -458,3 +458,123 @@ matrices can have off-diagonal dynamics, not just off-diagonal
 steady-state gains); the reconciliation step is still a per-output
 two-source weighted average, not a joint estimate across a unit's
 correlated outputs.
+
+## 11. Connecting v3 to v1
+
+Until now, v1, v2, and v3 were three independent demos that happened to
+share a repo, not a coordinated system. This is the actual "missing
+link" GDOT's own materials describe: aligning real-time unit-level
+economics (v3) with the blend/scheduling layer's needs (v1), as a
+genuine bidirectional loop, not just piping one layer's output into the
+next. v2 (tanks/scheduling) is not connected yet — see section 11.6.
+
+### 11.1 Architecture
+
+Each tick (`src/Coordination.jl`, `run_coordinated_loop`):
+
+1. Every **sourced** component's `available` is set from its
+   `DynamicUnit`'s current reconciled output (`y_hat`) — v3 → v1.
+2. `optimize_blend` solves the live blend LP.
+3. Its **shadow price** for that component's availability constraint
+   (added to v1 for exactly this purpose — see 11.2) becomes the live
+   "price" term in a fresh `econ` closure for that unit's
+   `successive_lp_optimize` call, replacing what was a hardcoded
+   constant in the standalone v3 examples — v1 → v3.
+4. The unit's applied input ramps toward that tick's target under its
+   own rate limit, and its dynamics/reconciliation advance one step.
+
+A component can still be `static` (untouched by any unit, exactly as in
+plain v1 usage) — only components explicitly given a `ComponentSource`
+are put under real-time control.
+
+### 11.2 Shadow prices, added to v1
+
+`optimize_blend` now returns `component_shadow_prices` (on
+`OptimizationResult`) and `spec_shadow_prices` (on `BlendRecipe`),
+computed from `JuMP.shadow_price` on the constraints. This also closes
+a gap in v1's own original acceptance criteria (section 7, point 3),
+which wanted "which spec constraints are binding (shadow-price style)"
+and only ever got a binding/violated flag, not a number.
+
+Both are scaled to read as **positive dollars per one unit of
+loosening the constraint** — "value of one more unit of availability"
+for a component, "cost of tightening by one unit" for a spec bound —
+regardless of whether the underlying JuMP constraint is `<=` or `>=`.
+This is `-shadow_price(constraint)` in both cases, and for spec bounds
+additionally scaled by the product's `demand` (the constraint's raw RHS
+is `spec_value * demand`, so its raw dual is "per unit of demand", not
+"per unit of spec value"). None of this was assumed: three small
+hand-derived LPs (an availability cap, a max-type spec, a min-type
+spec) were solved directly in JuMP first to pin down the sign and
+scaling before writing the real code — see `test_optimizer.jl`'s
+"shadow prices match hand-derived LP duality" test, which reproduces
+all three.
+
+### 11.3 The demo scenario, hand-derived
+
+`scripts/run_coordination_demo.jl` and the matching test: a blend
+(demand 100/tick, spec RON ≥ 90) draws from a static filler (FILL: $40,
+RON 80 — below spec alone) and a reformer-sourced component (REF: $0
+blend-side cost, RON 95 — above spec alone), whose volume is set by a
+`DynamicUnit` maximizing `price * rate(u) - 30 * u` where
+`rate(u) = 150*(1-e^{-u/80})`.
+
+Because REF is both free and higher-quality than FILL, the blend always
+uses *all* available REF (up to full demand) — so as long as
+`0 < rate(u) < 100`, REF's shadow price is pinned at exactly $40 (the
+cost of the FILL it displaces), independent of the octane spec. That
+turns the reformer's problem into the same diminishing-returns
+allocation already solved (and verified) in v3's own test suite, just
+with a live price instead of a constant:
+
+```
+maximize  40 * 150*(1-e^{-u/80}) - 30*u
+d/du = 0  =>  e^{-u/80} = 0.4  =>  u* = -80*ln(0.4) = 73.297...
+rate* = 150*(1-0.4) = 90                      (consistent: 90 < 100)
+```
+
+`test_coordination.jl` checks the shadow price stays at exactly $40.0
+on *every* tick (not just at the end) and that the applied input and
+reconciled output converge to `u* ≈ 73.3`, `rate* ≈ 90`.
+
+### 11.4 Scope cut: quality stays static
+
+A unit here only produces *volume* — a component's quality properties
+(RON, etc.) are still fixed numbers, as in plain v1. A quality-flexible
+unit (where a spec's own shadow price, not just an availability shadow
+price, feeds back into the unit's objective) is a natural next step but
+needs a defensible way to translate "the blend spec is worth $X more
+per unit of average quality" into "this component's own quality is
+worth $Y more per unit" — e.g. weighting by the component's blend
+fraction — which wasn't verified carefully enough here to ship.
+
+### 11.5 A real limitation, found by running it: cold-start deadlock
+
+Starting the reformer at `u=0` (its actual minimum, not the demo's
+warm-started `u=50`) does not recover on its own — it stays pinned at
+`u=0` forever. This was discovered by running exactly that scenario in
+`test_coordination.jl`, not assumed away: with no REF available, the
+blend is infeasible, `component_shadow_prices` comes back empty, and
+every sourced unit sees a price of exactly `0.0` that tick. At price
+zero, a unit's economic objective is strictly "produce nothing" (any
+`u > 0` only adds operating cost for zero revenue) — a self-reinforcing
+deadlock with no gradient pointing out of it, not a slow transient. The
+"cold start" test verifies this precise behavior (stays at exactly
+`u=0`, every tick infeasible) rather than a false claim that it
+recovers.
+
+This is a known real issue for dual-value/shadow-price-driven
+coordination generally, not specific to this toy scenario. A real fix
+— not built here — would need something like a configurable minimum
+"floor price" per sourced component (an exploration incentive even
+when infeasible) or an explicit bootstrap/warm-up mode; both are
+future work.
+
+### 11.6 Not yet connected: v2
+
+This section only connects v3 to v1 (single-period blending). Extending
+it to v2 (multi-period scheduling with tanks) is the natural next step
+— a unit's output would feed a `Tank`'s receipts instead of a
+`Component`'s flat `available`, and the shadow price would come from
+v2's per-period, per-tank capacity constraints instead of v1's
+per-component availability constraint.

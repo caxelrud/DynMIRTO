@@ -21,10 +21,18 @@ versions of the same thing:
 
 v1/v2 use JuMP.jl + HiGHS directly; v3 also uses them, but as the inner
 solver of a repeated linearize-and-resolve loop rather than a single
-LP. See [`DESIGN.md`](DESIGN.md) for the full design of each layer,
+LP. **v1 and v3 are now connected** (section 11): v3's units source
+v1's blend components in real time, and v1's LP shadow prices become
+the live economic signal v3 optimizes against — the actual
+"missing link" GDOT's own materials describe, not three independent
+demos that happen to share a repo.
+
+See [`DESIGN.md`](DESIGN.md) for the full design of each layer,
 including v1's blending-index handling for non-linear properties (RON,
 RVP, ...), v2's key simplification (fixed-quality tanks — section 9.1),
-and v3's scope cuts relative to the real technology (section 10.2).
+v3's scope cuts relative to the real technology (section 10.2), and the
+v1↔v3 coordination's own scope cuts and a real limitation it exposed
+(a shadow-price cold-start deadlock — section 11.5).
 
 ## Quickstart
 
@@ -41,6 +49,10 @@ julia --project=. scripts/run_schedule.jl data/examples/schedule_example.json
 
 # v3: real-time dynamic optimization (nonlinear units, noisy sensors, closed loop)
 julia --project=. scripts/run_dynamic_demo.jl
+
+# v1 <-> v3 connected: a unit's real-time output feeds v1's blend, whose
+# shadow prices feed back as the unit's live economic signal
+julia --project=. scripts/run_coordination_demo.jl
 ```
 
 ## Interactive notebook
@@ -128,6 +140,27 @@ climbs toward the true steady-state outputs as the dynamics settle.
 Unlike v1/v2, v3 scenarios are defined in Julia code, not JSON — see
 DESIGN.md section 10.2 for why. There's no notebook for v3 yet.
 
+## Connecting v3 to v1
+
+`scripts/run_coordination_demo.jl` runs a blend (spec: RON ≥ 90) that
+draws from a static, always-plentiful filler ($40/unit, RON 80) and a
+component sourced live from a `DynamicUnit` reformer ($0 blend-side
+cost, RON 95) whose *production rate* is set every tick by maximizing
+v1's current shadow price for it against its own operating cost.
+
+Because the reformer's output is both free and higher-quality than the
+filler, the blend always uses all of it, so its shadow price holds at
+exactly $40 (the cost of the filler it displaces) from tick 1 — watch
+that column stay pinned while the feed setpoint and production rate
+climb toward the hand-derived optimum (u\*=73.30, rate\*=90.0; see
+DESIGN.md section 11.3 for the derivation). A separate test starts the
+same reformer at its true minimum instead of a warm start, and finds a
+real, permanent deadlock rather than a slow recovery — a known
+limitation of pure shadow-price-driven coordination, documented (not
+hidden) in DESIGN.md section 11.5.
+
+v2 (tanks/scheduling) isn't connected yet — section 11.6.
+
 ## Layout
 
 ```
@@ -138,12 +171,14 @@ src/
   Optimizer.jl          # builds & solves the v1 (single-period) JuMP/HiGHS LP
   Scheduling.jl         # Tank, ScheduledProduct; builds & solves the v2 (multi-period) LP
   DynamicOptimization.jl # DynamicUnit; Wiener-Hammerstein dynamics, reconciliation, successive-LP (v3)
+  Coordination.jl       # connects v3 units to v1's blend LP via live shadow prices (section 11)
   ScenarioIO.jl         # load a v1 scenario, or a v2 schedule, from JSON
   Report.jl             # pretty-print a solved recipe, schedule, or real-time run
 scripts/
-  run_scenario.jl     # CLI: run a v1 scenario file end to end
-  run_schedule.jl     # CLI: run a v2 schedule file end to end
-  run_dynamic_demo.jl # CLI: run the v3 closed-loop demo end to end
+  run_scenario.jl            # CLI: run a v1 scenario file end to end
+  run_schedule.jl            # CLI: run a v2 schedule file end to end
+  run_dynamic_demo.jl        # CLI: run the v3 closed-loop demo end to end
+  run_coordination_demo.jl   # CLI: run the v1<->v3 coordinated demo end to end
 notebooks/
   blend_explorer.jl            # interactive Pluto notebook (v1), linked to src/ (see above)
   blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
@@ -164,4 +199,6 @@ correlations — see the comments there before using this for anything
 beyond demonstrating the mechanism. v3's scope cuts relative to the real
 GDOT technology are listed in DESIGN.md section 10.2 (single-input/
 single-output units, first-order dynamics only, simplified two-source
-reconciliation, and more).
+reconciliation, and more). The v1↔v3 coordination layer has a real,
+documented cold-start deadlock (DESIGN.md section 11.5) and only
+optimizes a sourced component's volume, not its quality (section 11.4).

@@ -69,7 +69,17 @@ is_eligible(c::Component, p::Product) =
 
 """
 Result of solving one product's blend: the recipe (volumes/fractions),
-the resulting quality (in real, non-index units), and its cost.
+the resulting quality (in real, non-index units), its cost, and each
+binding spec's shadow price.
+
+`spec_shadow_prices[prop]` is the economic value (in the LP's solver
+units, i.e. index space for `:index`-rule properties) of relaxing that
+property's spec by one unit -- positive means tightening the spec costs
+money, zero means the spec isn't binding. It answers the "why can't I
+use more of X" question the original design doc wanted (see DESIGN.md
+section 7) and, since GDOT's whole point is aligning real-time unit
+economics with exactly this kind of blend/scheduling signal, is also
+what section 11's v1-v3 coordination uses as its price signal.
 """
 struct BlendRecipe
     product_id::String
@@ -77,4 +87,5 @@ struct BlendRecipe
     fractions::Dict{String,Float64}
     resulting_properties::Dict{Symbol,Float64}
     cost::Float64
+    spec_shadow_prices::Dict{Symbol,Float64}
 end
