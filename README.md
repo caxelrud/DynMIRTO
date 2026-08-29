@@ -1,19 +1,30 @@
 # DynMIRTO
 
-A Julia blend-optimization engine, inspired by AspenTech GDOT (Gasoline
-Distribution/blend Optimization Tool). Given blendstock components (cost,
-availability, quality properties) and product specs (demand, quality
-ranges), it computes the minimum-cost blend recipe that meets every spec.
+A Julia optimization engine exploring the ideas behind AspenTech's GDOT
+("Generic Dynamic Optimization Technology", from Apex Optimisation,
+acquired by AspenTech in 2018) — corrected here from this project's
+original (wrong) assumption that GDOT was gasoline-specific. It has
+three layers, each a genuinely different kind of model, not three
+versions of the same thing:
 
-v1 is single-period recipe optimization; v2 adds multi-period scheduling
-on top — tanks with inventory that evolves via scheduled receipts and
-blending draws over a horizon. Both are LPs solved with
-[JuMP.jl](https://jump.dev) + [HiGHS](https://highs.dev). See
-[`DESIGN.md`](DESIGN.md) for the full design, including how non-linear
-blending properties (RON, RVP, ...) are handled via blending indices, and
-v2's key simplification (fixed-quality tanks — see DESIGN.md section 9.1
-for why, and what's still out of scope: real in-tank quality mixing,
-procurement optimization).
+- **v1** — single-period blend-recipe optimization (an LP): given
+  blendstock components and product specs, the minimum-cost blend
+  recipe meeting every spec.
+- **v2** — multi-period scheduling on top of v1: tank inventory that
+  evolves via scheduled receipts and blending draws over a horizon.
+- **v3** — a scoped-down implementation of GDOT's *actual* technical
+  core (per [its inventor's patent](https://patents.google.com/patent/US20100274368A1)):
+  nonlinear dynamic unit models, real-time data reconciliation against
+  noisy measurements, and continuous re-optimization via successive
+  linear programming — a genuine closed real-time loop, unlike v1/v2's
+  one-shot LPs.
+
+v1/v2 use JuMP.jl + HiGHS directly; v3 also uses them, but as the inner
+solver of a repeated linearize-and-resolve loop rather than a single
+LP. See [`DESIGN.md`](DESIGN.md) for the full design of each layer,
+including v1's blending-index handling for non-linear properties (RON,
+RVP, ...), v2's key simplification (fixed-quality tanks — section 9.1),
+and v3's scope cuts relative to the real technology (section 10.2).
 
 ## Quickstart
 
@@ -27,6 +38,9 @@ julia --project=. scripts/run_scenario.jl data/examples/multi_grade.json
 
 # v2: multi-period scheduling (tanks, receipts, demand over a horizon)
 julia --project=. scripts/run_schedule.jl data/examples/schedule_example.json
+
+# v3: real-time dynamic optimization (nonlinear units, noisy sensors, closed loop)
+julia --project=. scripts/run_dynamic_demo.jl
 ```
 
 ## Interactive notebook
@@ -91,20 +105,36 @@ julia -e 'using Pluto; Pluto.run(notebook="notebooks/schedule_explorer.jl")'
 blend explorer's: a snapshot at default slider values, not auto-
 regenerated).
 
+## Real-time dynamic optimization (v3)
+
+`scripts/run_dynamic_demo.jl` runs a small closed loop: two process
+units, each with a concave (diminishing-returns) steady-state yield
+curve reached via first-order dynamics, sharing a binding utility
+budget. Every tick it re-solves for the economic optimum from a noisy,
+reconciled state estimate — watch `u_target` lock onto the analytical
+optimum immediately (it only depends on the economics) while
+`u_applied` ramps there under each unit's real rate limit, and `y_hat`
+climbs toward the true steady-state output as the dynamics settle.
+
+Unlike v1/v2, v3 scenarios are defined in Julia code, not JSON — see
+DESIGN.md section 10.2 for why. There's no notebook for v3 yet.
+
 ## Layout
 
 ```
 src/
-  DynMIRTO.jl     # module entry point
-  Types.jl        # Component, Product, PropertySpec, BlendRecipe (v1)
-  BlendIndices.jl # pluggable blending-index registry (RON, RVP, ...)
-  Optimizer.jl    # builds & solves the v1 (single-period) JuMP/HiGHS LP
-  Scheduling.jl   # Tank, ScheduledProduct; builds & solves the v2 (multi-period) LP
-  ScenarioIO.jl   # load a v1 scenario, or a v2 schedule, from JSON
-  Report.jl       # pretty-print a solved recipe or schedule
+  DynMIRTO.jl           # module entry point
+  Types.jl              # Component, Product, PropertySpec, BlendRecipe (v1)
+  BlendIndices.jl       # pluggable blending-index registry (RON, RVP, ...)
+  Optimizer.jl          # builds & solves the v1 (single-period) JuMP/HiGHS LP
+  Scheduling.jl         # Tank, ScheduledProduct; builds & solves the v2 (multi-period) LP
+  DynamicOptimization.jl # DynamicUnit; Wiener-Hammerstein dynamics, reconciliation, successive-LP (v3)
+  ScenarioIO.jl         # load a v1 scenario, or a v2 schedule, from JSON
+  Report.jl             # pretty-print a solved recipe, schedule, or real-time run
 scripts/
-  run_scenario.jl # CLI: run a v1 scenario file end to end
-  run_schedule.jl # CLI: run a v2 schedule file end to end
+  run_scenario.jl     # CLI: run a v1 scenario file end to end
+  run_schedule.jl     # CLI: run a v2 schedule file end to end
+  run_dynamic_demo.jl # CLI: run the v3 closed-loop demo end to end
 notebooks/
   blend_explorer.jl            # interactive Pluto notebook (v1), linked to src/ (see above)
   blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
@@ -122,4 +152,7 @@ data/examples/
 Early prototype. The default RON/MON blending-index exponents in
 `BlendIndices.jl` are illustrative placeholders, not calibrated refinery
 correlations — see the comments there before using this for anything
-beyond demonstrating the mechanism.
+beyond demonstrating the mechanism. v3's scope cuts relative to the real
+GDOT technology are listed in DESIGN.md section 10.2 (single-input/
+single-output units, first-order dynamics only, simplified two-source
+reconciliation, and more).

@@ -55,6 +55,36 @@ end
 print_schedule_report(products::Vector{ScheduledProduct}, tanks::Vector{Tank}, result::ScheduleResult, periods) =
     print_schedule_report(stdout, products, tanks, result, periods)
 
+"""
+    print_realtime_report(io, history)
+
+Pretty-print a solved real-time dynamic-optimization run: one row per
+tick, showing each unit's applied input, reconciled state estimate, and
+the steady-state target the optimizer was aiming for.
+"""
+function print_realtime_report(io::IO, history::Vector{RealTimeTick})
+    isempty(history) && return
+    unit_ids = sort(collect(keys(history[1].u_applied)))
+
+    header = "tick"
+    for id in unit_ids
+        header *= @sprintf("  | %s: u_applied  y_hat  u_target", id)
+    end
+    println(io, header)
+    println(io, "-"^length(header))
+
+    for tick in history
+        row = @sprintf("%4d", tick.tick)
+        for id in unit_ids
+            row *= @sprintf("  | %10.3f %10.3f %10.3f",
+                tick.u_applied[id], tick.y_hat[id], tick.u_target[id])
+        end
+        println(io, row)
+    end
+end
+
+print_realtime_report(history::Vector{RealTimeTick}) = print_realtime_report(stdout, history)
+
 function _print_recipe_body(io::IO, specs::Dict{Symbol,PropertySpec}, volumes, fractions, resulting_properties, cost)
     println(io, "\nRecipe:")
     for (cid, vol) in sort(collect(volumes); by=first)

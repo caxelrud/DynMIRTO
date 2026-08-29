@@ -278,3 +278,127 @@ per-period-demand, horizon length).
 4. Reuses v1's `Component`/`PropertySpec`/blending-index machinery
    unchanged — no duplication of the blend math, only the new tank/time
    layer is new code.
+
+## 10. v3: real-time dynamic optimization
+
+v1 and v2 are both **one-shot LPs**: given a snapshot (or a fixed
+schedule of snapshots), solve once. Neither has anything analogous to
+what AspenTech's actual GDOT does at its core — this section corrects
+course after checking primary sources instead of guessing.
+
+GDOT ("Generic Dynamic Optimization Technology") came from Apex
+Optimisation, acquired by AspenTech in 2018; despite this project's
+original working assumption, the name has nothing to do with gasoline
+specifically. Its inventor, Henrik Terndrup, holds the patent describing
+the actual mechanism:
+[US 2010/0274368 A1, "Method and system for dynamic optimisation of
+industrial processes"](https://patents.google.com/patent/US20100274368A1)
+(assignee now AspenTech Corporation). v3 is a deliberately scoped-down
+but mechanistically faithful implementation of that patent's core idea,
+not the gasoline-specific v1/v2 model.
+
+### 10.1 The real mechanism, per the patent
+
+1. **Wiener-Hammerstein unit models**: each unit's output is a nonlinear
+   *steady-state* function of its input, `z∞ = f(u∞)`, reached via
+   *linear* dynamics — the patent writes this as `h = f(z∞)·g(s)`. This
+   lets the optimizer predict where a unit will *end up* while it is
+   still mid-transient, instead of waiting for steady state (what
+   classic real-time optimization, RTO, requires).
+2. **Successive linear programming (SLP)**: the true objective is
+   nonlinear (because `f` is), so it is solved as a *sequence of linear
+   static optimization problems* via repeated linearization around the
+   current operating point — not a single LP, and not a full nonlinear
+   solve either.
+3. **Real-time data reconciliation**: a module continuously estimates
+   the true state by minimizing weighted deviations between the dynamic
+   model's prediction and noisy measurements, so the optimizer always
+   works from a clean, consistent estimate rather than raw sensor noise.
+4. **One shared model, run continuously**: the same model serves both
+   reconciliation and profit-maximizing optimization, re-solved on every
+   control cycle as new measurements arrive — a genuine closed loop,
+   which is what "real-time" and "dynamic" mean here.
+
+### 10.2 Scope cuts (documented, not hidden)
+
+- **Single-input/single-output units, first-order dynamics only.** The
+  patent's model class is general LTI dynamics and multivariable units;
+  v3 uses one manipulated variable and one first-order lag per unit.
+  This keeps the dynamic update exact and closed-form
+  (`z + (y-z)·exp(-dt/τ)`) instead of needing a general linear
+  state-space solver.
+- **Reconciliation is a two-source weighted average** (model prediction
+  vs. measurement) per unit, closed-form. Real data reconciliation
+  spans many redundant, correlated measurements and mass/energy balance
+  constraints across a whole plant — a much bigger estimation problem
+  (typically nonlinear least squares over a plant-wide model).
+- **SLP uses a shrinking trust region with true-objective backtracking**:
+  a candidate step is accepted only if it actually improves the true
+  (non-linearized) objective; otherwise the trust region shrinks and the
+  step is retried from the same point. This is a standard, defensible
+  SLP safeguard, but a step's *constraints* are only checked in
+  linearized form each iteration, not re-verified against the true
+  nonlinear constraint — acceptable given steps are kept small by the
+  trust region, but not a guarantee the real constraint always holds.
+- **Rate-of-change limits vs. optimizer trust region are kept separate
+  on purpose**: `DynamicUnit.max_step` is a *real* limit on how fast the
+  applied input may move per control tick (like an APC output ramp
+  limit); the SLP's internal trust region is a *numerical* device for
+  convergence, initialized from `max_step` but free to shrink further
+  within one solve. Conflating the two would either make the optimizer
+  converge too slowly or let it plan targets faster than the plant could
+  actually be moved toward.
+- **Scenarios are Julia code, not JSON.** Nonlinear gain functions aren't
+  naturally JSON-serializable without a small expression DSL; v3
+  scenarios are plain Julia closures instead, consistent with how the
+  gain-function-heavy `BlendIndices.jl` registry already works.
+
+### 10.3 Domain model
+
+```
+DynamicUnit
+  id::String
+  tau::Float64                  # time constant of the first-order lag
+  steady_state_gain::Function   # f(u) -> z∞, nonlinear, smooth
+  u_min::Float64, u_max::Float64
+  max_step::Float64             # real rate-of-change limit per tick
+
+RealTimeTick   (one tick of a solved closed loop)
+  tick::Int
+  y_true, y_measured, y_hat::Dict{String,Float64}   # hidden / noisy / reconciled
+  u_applied, u_target::Dict{String,Float64}
+```
+
+`econ(u, z)` and `constraints(model, u, z)` are user-supplied callbacks
+(plain Julia, not stored on `DynamicUnit`) — `econ` must work identically
+whether `u`/`z` hold JuMP expressions (inside the LP) or plain `Float64`s
+(when evaluating the true objective for trust-region backtracking).
+
+### 10.4 The closed loop, per tick
+
+1. The (simulated) true plant evolves one step under the *previously
+   applied* input (`step_state`).
+2. A noisy measurement is taken.
+3. Reconciliation blends the model's one-step prediction with that
+   measurement (`reconcile`).
+4. `successive_lp_optimize` re-solves for the steady-state economic
+   target `u_target` from the current applied input.
+5. The applied input moves toward `u_target` by at most `max_step` (the
+   real rate limit) — not necessarily reaching it in one tick.
+
+### 10.5 Acceptance criteria (v3)
+
+1. `step_state` matches the closed-form exponential solution of the
+   first-order lag exactly (not just approximately) for constant input
+   over an interval.
+2. `reconcile` recovers the measurement exactly when weighted entirely
+   on measurement, and the model's prediction exactly when weighted
+   entirely on the model — the two boundary cases of the closed-form
+   weighted average.
+3. `successive_lp_optimize` on a single concave quadratic gain converges
+   to the exact calculus-derived unconstrained optimum.
+4. `successive_lp_optimize` on two units sharing a binding linear budget
+   constraint converges to the exact Lagrangian (equal-marginal-value)
+   constrained optimum, hand-derived.
+5. `run_real_time_loop` (no noise) drives the applied inputs toward that
+   same constrained optimum over ticks, subject to the rate limit.
