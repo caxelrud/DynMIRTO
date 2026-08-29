@@ -71,11 +71,20 @@ Outcome of `optimize_schedule`. `status` is `:optimal` or `:infeasible`.
 `recipes[(product_id, period)]` gives that period's `PeriodRecipe`.
 `tank_levels[(tank_id, period)]` gives the tank's inventory at the *end*
 of that period (period `0` is each tank's `initial_inventory`).
+`tank_shadow_prices[(tank_id, period)]` is the marginal value of one more
+unit of that period's *receipt* into that tank (equivalently, of one more
+unit of initial/carried-over inventory arriving at that point) -- the dual
+of that period's inventory-balance equality constraint, sign-flipped the
+same way `Optimizer.jl`'s `component_shadow_prices` are (see DESIGN.md
+section 11.6): empirically verified to reproduce v1's shadow price exactly
+for the same underlying economics, since a tank's balance constraint is
+just v1's flat availability bound spread over time.
 """
 struct ScheduleResult
     status::Symbol
     recipes::Dict{Tuple{String,Int},PeriodRecipe}
     tank_levels::Dict{Tuple{String,Int},Float64}
+    tank_shadow_prices::Dict{Tuple{String,Int},Float64}
     diagnostics::Vector{String}
 end
 
@@ -155,7 +164,7 @@ function optimize_schedule(components::Vector{Component}, tanks::Vector{Tank},
     diagnostics = _prevalidate_schedule(components, tanks, products, receipts, periods)
     if !isempty(diagnostics)
         return ScheduleResult(:infeasible, Dict{Tuple{String,Int},PeriodRecipe}(),
-            Dict{Tuple{String,Int},Float64}(), diagnostics)
+            Dict{Tuple{String,Int},Float64}(), Dict{Tuple{String,Int},Float64}(), diagnostics)
     end
 
     comp_by_id = Dict(c.id => c for c in components)
@@ -191,6 +200,7 @@ function optimize_schedule(components::Vector{Component}, tanks::Vector{Tank},
         end
     end
 
+    invbal = Dict{Tuple{String,Int},JuMP.ConstraintRef}()
     ordered_periods = sort(collect(periods))
     for tank in tanks
         prev_inv = tank.initial_inventory
@@ -202,7 +212,7 @@ function optimize_schedule(components::Vector{Component}, tanks::Vector{Tank},
             end
             consumed = isempty(consumed_vars) ? 0.0 : sum(v for (v, _) in consumed_vars)
             receipt = get(receipts, (tank.id, t), 0.0)
-            @constraint(model, inv[(tank.id, t)] == prev_inv + receipt - consumed)
+            invbal[(tank.id, t)] = @constraint(model, inv[(tank.id, t)] == prev_inv + receipt - consumed)
             prev_inv = inv[(tank.id, t)]
         end
     end
@@ -239,13 +249,20 @@ function optimize_schedule(components::Vector{Component}, tanks::Vector{Tank},
         note = "Solver returned $(status). This can mean tank capacity/receipts and " *
                "demand are infeasible together over this horizon, or (rarely) numerical trouble."
         return ScheduleResult(:infeasible, Dict{Tuple{String,Int},PeriodRecipe}(),
-            Dict{Tuple{String,Int},Float64}(), [note])
+            Dict{Tuple{String,Int},Float64}(), Dict{Tuple{String,Int},Float64}(), [note])
     end
 
     tank_levels = Dict{Tuple{String,Int},Float64}()
     for tank in tanks, t in periods
         tank_levels[(tank.id, t)] = value(inv[(tank.id, t)])
     end
+
+    # -dual(...): a period's inventory-balance constraint is v1's flat
+    # availability bound spread over time, so the same sign-flip rule
+    # applies (verified against a standalone hand-derived LP reproducing
+    # v1's own $40 reformer/filler equilibrium exactly -- see DESIGN.md
+    # section 11.6).
+    tank_shadow_prices = Dict((tid, t) => -dual(con) for ((tid, t), con) in invbal)
 
     recipes = Dict{Tuple{String,Int},PeriodRecipe}()
     for p in products, t in periods
@@ -278,5 +295,5 @@ function optimize_schedule(components::Vector{Component}, tanks::Vector{Tank},
         recipes[(p.id, t)] = PeriodRecipe(t, p.id, volumes, fractions, resulting, cost)
     end
 
-    return ScheduleResult(:optimal, recipes, tank_levels, String[])
+    return ScheduleResult(:optimal, recipes, tank_levels, tank_shadow_prices, String[])
 end

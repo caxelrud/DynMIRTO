@@ -23,11 +23,12 @@ versions of the same thing:
 
 v1/v2 use JuMP.jl + HiGHS directly; v3 also uses them, but as the inner
 solver of a repeated linearize-and-resolve loop rather than a single
-LP. **v1 and v3 are now connected** (section 11): v3's units source
-v1's blend components in real time, and v1's LP shadow prices become
-the live economic signal v3 optimizes against — the actual
-"missing link" GDOT's own materials describe, not three independent
-demos that happen to share a repo.
+LP. **v1 and v3 are now connected, and so are v2 and v3** (section 11):
+v3's units source v1's blend components (or v2's tanks) in real time,
+and the planning layer's LP shadow prices become the live economic
+signal v3 optimizes against — the actual "missing link" GDOT's own
+materials describe, not three independent demos that happen to share a
+repo.
 
 See [`DESIGN.md`](DESIGN.md) for the full design of each layer,
 including v1's blending-index handling for non-linear properties (RON,
@@ -58,6 +59,11 @@ julia --project=. scripts/run_coordination_demo.jl
 
 # the same, but from a true cold start -- shows the deadlock fix (floor_price)
 julia --project=. scripts/run_coordination_coldstart_demo.jl
+
+# v2 <-> v3 connected: the same idea extended to tanks/scheduling, plus
+# genuine cross-tick tank accumulation (v1's coordination has no memory
+# between ticks at all -- this does)
+julia --project=. scripts/run_coordination_schedule_demo.jl
 ```
 
 ## Interactive notebook
@@ -172,7 +178,25 @@ the fix are covered in `test/test_coordination.jl`, and the full story
 (including why too-low a floor price still deadlocks) is in DESIGN.md
 section 11.5.
 
-v2 (tanks/scheduling) isn't connected yet — section 11.6.
+## Connecting v3 to v2
+
+`scripts/run_coordination_schedule_demo.jl` extends the same mechanism
+to v2: `TankSource` maps a `Tank` to a `DynamicUnit`'s output, and each
+real-time tick *is* one v2 period. With both tanks wide open (only the
+receipt/inventory-balance mechanics exercised), it reproduces the v1
+demo's own numbers exactly — same $40 shadow price, same u\*=73.30,
+rate\*=90.0 — confirming the Tank-based path is mechanically equivalent
+to v1's flat-availability one for the same underlying economics.
+
+What v1's coordination *can't* do at all: a tank genuinely carries
+inventory across ticks (v1's coordination has no memory between ticks —
+it re-derives "availability" from scratch every time). The demo's second
+part shows a unit producing faster than demand draws down, building a
+real surplus (`20`/tick) with no v1 analogue. The cold-start deadlock and
+its `floor_price` fix (section 11.5) apply identically here — see
+`TankSource`'s own `floor_price`. Full derivation and scope cuts (a tank
+is either fully unit-sourced or fully static, no mixing with a fixed
+receipt schedule) are in DESIGN.md section 11.6.
 
 ## Layout
 
@@ -186,7 +210,7 @@ src/
   Optimizer.jl          # builds & solves the v1 (single-period) JuMP/HiGHS LP
   Scheduling.jl         # Tank, ScheduledProduct; builds & solves the v2 (multi-period) LP
   DynamicOptimization.jl # DynamicUnit; Wiener-Hammerstein dynamics, reconciliation, successive-LP (v3)
-  Coordination.jl       # connects v3 units to v1's blend LP via live shadow prices (section 11)
+  Coordination.jl       # connects v3 units to v1's blend LP / v2's tanks via live shadow prices (section 11)
   ScenarioIO.jl         # load a v1 scenario, or a v2 schedule, from JSON
   Report.jl             # pretty-print a solved recipe, schedule, or real-time run
 scripts/
@@ -195,6 +219,7 @@ scripts/
   run_dynamic_demo.jl        # CLI: run the v3 closed-loop demo end to end
   run_coordination_demo.jl   # CLI: run the v1<->v3 coordinated demo end to end
   run_coordination_coldstart_demo.jl # CLI: same, but from a true cold start (shows the floor_price fix)
+  run_coordination_schedule_demo.jl  # CLI: run the v2<->v3 coordinated demo (cross-validation + tank accumulation)
 notebooks/
   blend_explorer.jl            # interactive Pluto notebook (v1), linked to src/ (see above)
   blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
@@ -219,3 +244,7 @@ reconciliation, and more). The v1↔v3 coordination layer's cold-start
 deadlock has a fix (`floor_price` — DESIGN.md section 11.5), but picking
 a good floor price is still a per-scenario judgment call, and it only
 optimizes a sourced component's volume, not its quality (section 11.4).
+The same coordination mechanism now also connects to v2 (tanks/
+scheduling — section 11.6), carrying over the same scope cuts, plus one
+more of its own: a tank is either fully unit-sourced or fully static, no
+mixing a unit-sourced receipt with a fixed schedule on the same tank.

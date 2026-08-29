@@ -464,9 +464,10 @@ correlated outputs.
 Until now, v1, v2, and v3 were three independent demos that happened to
 share a repo, not a coordinated system. This is the actual "missing
 link" GDOT's own materials describe: aligning real-time unit-level
-economics (v3) with the blend/scheduling layer's needs (v1), as a
+economics (v3) with the planning layer's needs (v1 first, then v2), as a
 genuine bidirectional loop, not just piping one layer's output into the
-next. v2 (tanks/scheduling) is not connected yet — see section 11.6.
+next. Sections 11.1–11.5 describe the v1 connection; section 11.6
+extends the same mechanism to v2 (tanks/multi-period scheduling).
 
 ### 11.1 Architecture
 
@@ -580,18 +581,85 @@ still a per-scenario judgment call (too low never escapes the deadlock,
 as the same math shows for `floor_price=20` or `28.8`); an explicit
 bootstrap/warm-up mode is a further alternative, not built.
 
-### 11.6 Not yet connected: v2
+### 11.6 Extending coordination to v2
 
-This section only connects v3 to v1 (single-period blending). Extending
-it to v2 (multi-period scheduling with tanks) is the natural next step
-— a unit's output would feed a `Tank`'s receipts instead of a
-`Component`'s flat `available`, and the shadow price would come from
-v2's per-period, per-tank capacity constraints instead of v1's
-per-component availability constraint.
+`run_coordinated_schedule_loop` (`src/Coordination.jl`) is the v2
+analogue of `run_coordinated_loop`: a `TankSource` maps a `Tank` to a
+`DynamicUnit`'s output, exactly as `ComponentSource` maps a `Component`.
+Each real-time tick *is* one v2 period — tick `t` solves
+`optimize_schedule` over `periods=t:t`, so a `ScheduledProduct`'s
+`demand` dict, keyed by tick number, can vary tick to tick same as in any
+v2 schedule.
+
+**Shadow prices, added to v2.** `ScheduleResult` now also carries
+`tank_shadow_prices[(tank_id, period)]`: the dual of that period's
+inventory-balance equality constraint (`inv == prev_inv + receipt -
+consumed`), sign-flipped the same way as v1's `component_shadow_prices`
+(`-dual(constraint)`). This needed its own verification, not an
+assumption carried over from 11.2: an equality constraint's dual was a
+new case (v1's constraints are all inequalities), checked with a
+standalone hand-derived LP reproducing the *exact* reformer/REF/FILL
+economics from 11.3 through a tank's receipt instead of a flat
+`available` bound — both the sign convention and the $40 magnitude came
+back identical, confirmed independently via finite difference
+(`d(cost)/d(receipt) = -40`, so the value of one more unit of receipt is
+`+40`, matching v1's own figure for the same underlying economics
+exactly).
+
+**The genuinely new part: real cross-tick state.** v1's coordination is
+completely memoryless between ticks — it re-derives "availability" from
+scratch, every tick, with nothing carried over. A `Tank` in v2's
+coordination actually accumulates: each tick, a sourced tank's receipt
+comes from its unit's current `y_hat`, and the *resulting* inventory
+(from that tick's solved `tank_levels`) is carried forward as that
+tank's starting point for the next tick — seeded from the `Tank`'s own
+`initial_inventory` on tick 1. This is exercised directly (not just
+inferred from the cross-validation) by a "genuine cross-tick
+accumulation" test: a unit with a *constant* steady-state gain (so
+`successive_lp_optimize` has nothing to optimize — u never moves) feeds
+a tank against a flat lower demand, and the tank's level is checked
+against the exact hand-computed sequence `20, 40, 60, 80, 100` over 5
+ticks (surplus of `20`/tick, starting from `0`).
+
+**Cross-validation.** With both REF's and FILL's tanks wide open (huge
+capacity, so only the receipt/inventory-balance mechanics are actually
+exercised) and a flat demand of 100/tick fed into a `ScheduledProduct`
+keyed `1:n_ticks`, the Tank-based path reproduces the v1 coordination
+demo's own numbers exactly: `tank_shadow_prices` pinned at `$40.0` every
+tick, tank level `0.0` every tick (REF stays strictly scarcer than
+demand, so nothing accumulates), and the same `u* ≈ 73.297`,
+`rate* ≈ 90.0` convergence.
+
+**Cold-start deadlock, same fix.** The same failure mode from 11.5
+applies here for the same reason: on an infeasible tick, every sourced
+tank's shadow price is absent (defaults to `0.0`), so a unit that starts
+too low to ever reach feasibility has no gradient pointing out. On an
+infeasible tick, the tank-side state is simply *frozen* rather than
+guessed at — that schedule was never actually realizable, so there is
+nothing consistent to carry forward. `TankSource`'s `floor_price` is the
+same fix as `ComponentSource`'s: a minimum price used only while
+infeasible, never overriding a real shadow price. `floor_price=35.0`
+against this scenario escapes the deadlock and hands back off to the
+real `$40` shadow price at the same ~66.67 threshold as v1's own demo.
+
+**Scope cuts carried over unchanged from v1's coordination:** quality
+still stays static (11.4 applies here too — only a tank's *volume* is
+under real-time control), and picking a good floor price is still a
+per-scenario judgment call (11.5's caveat applies identically). One
+further v2-specific cut: a tank named in `tank_sources` gets its receipt
+entirely from its unit; supplying a *fixed* receipt schedule on top (as
+a plain v2 schedule can) isn't supported by this coordination loop —
+a tank is either fully unit-sourced or fully static (draws only, no
+receipts) here.
+
+See `scripts/run_coordination_schedule_demo.jl` for both the
+cross-validation and the accumulation demo end to end, and
+`test/test_coordination.jl`'s `"Coordination (v2: tanks)"` testset for
+all of the above as executable tests.
 
 ## 12. Continuous integration
 
-`.github/workflows/ci.yml` runs the full test suite (237 tests as of
+`.github/workflows/ci.yml` runs the full test suite (384 tests as of
 this writing) on every push and pull request to `main`, against two
 Julia versions: `1.9` (matching `Project.toml`'s declared minimum
 `[compat]`) and `1` (resolves to the latest stable 1.x release).
