@@ -128,6 +128,31 @@ julia -e 'using Pluto; Pluto.run(notebook="notebooks/schedule_explorer.jl")'
 blend explorer's: a snapshot at default slider values, not auto-
 regenerated).
 
+### Coordination Explorer (v1 ↔ v3)
+
+`notebooks/coordination_explorer.jl` is an interactive view of the
+real-time loop in "Connecting v3 to v1" below: sliders for the
+reformer's initial feed setpoint, its operating cost, REF's
+`floor_price`, the octane spec, the number of ticks, and measurement
+noise. Recomputing live are a feed/production-rate trend (one row per
+tick, pink where that tick's blend was infeasible), a shadow-price/cost
+table, and the hand-derived analytical equilibrium (section 11.3),
+recomputed live from the operating-cost slider so you can check it
+against where the simulation actually converges.
+
+Drag **initial feed (u_init)** down to `0` with **floor_price** left at
+`0` to watch the cold-start deadlock (section 11.5) happen live — every
+row turns pink and stays there. Then raise **floor_price** and watch the
+same run escape it partway through instead.
+
+```sh
+julia -e 'using Pkg; Pkg.add("Pluto")'
+julia -e 'using Pluto; Pluto.run(notebook="notebooks/coordination_explorer.jl")'
+```
+
+`notebooks/coordination_explorer.pdf` is a print-out (same caveats:
+default slider values, not auto-regenerated).
+
 ## Real-time dynamic optimization (v3)
 
 `scripts/run_dynamic_demo.jl` runs a small closed loop with a mix of
@@ -224,6 +249,7 @@ notebooks/
   blend_explorer.jl            # interactive Pluto notebook (v1), linked to src/ (see above)
   blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
   schedule_explorer.jl         # interactive Pluto notebook (v2), linked to src/
+  coordination_explorer.jl     # interactive Pluto notebook (v1 <-> v3 coordination), linked to src/
 test/
   runtests.jl
 data/examples/

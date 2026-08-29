@@ -488,6 +488,19 @@ A component can still be `static` (untouched by any unit, exactly as in
 plain v1 usage) — only components explicitly given a `ComponentSource`
 are put under real-time control.
 
+`notebooks/coordination_explorer.jl` is an interactive Pluto view of
+this loop — sliders for the reformer's starting point, operating cost,
+`floor_price`, the octane spec, tick count, and measurement noise, with
+the hand-derived equilibrium (11.3) recomputed live alongside the actual
+simulated one. Verified interactively (not just by inspection): with
+`u_init=0` and `floor_price=0` every tick renders infeasible with the
+reformer pinned at `u=0` (the 11.5 deadlock), and raising `floor_price`
+to `35` reproduces the exact same tick-13 escape as the hand-derived
+figure below. One thing this caught: Markdown.jl does not interpolate
+`$(...)` inside a fenced code block in an `md"""..."""` literal (only in
+plain text) — the notebook's live-equilibrium cell had to be written
+around that.
+
 ### 11.2 Shadow prices, added to v1
 
 `optimize_blend` now returns `component_shadow_prices` (on
