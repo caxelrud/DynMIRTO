@@ -59,25 +59,39 @@ print_schedule_report(products::Vector{ScheduledProduct}, tanks::Vector{Tank}, r
     print_realtime_report(io, history)
 
 Pretty-print a solved real-time dynamic-optimization run: one row per
-tick, showing each unit's applied input, reconciled state estimate, and
-the steady-state target the optimizer was aiming for.
+tick, showing each unit's applied inputs, applied-input targets, and
+reconciled output estimates. Units, inputs, and outputs are all
+discovered from the first tick's keys (`(unit_id, input_id)` for
+`u_applied`/`u_target`, `(unit_id, output_id)` for `y_hat`).
 """
 function print_realtime_report(io::IO, history::Vector{RealTimeTick})
     isempty(history) && return
-    unit_ids = sort(collect(keys(history[1].u_applied)))
+
+    unit_ids = sort(unique(first(k) for k in keys(history[1].u_applied)))
+    inputs_by_unit = Dict(uid => sort([k[2] for k in keys(history[1].u_applied) if k[1] == uid]) for uid in unit_ids)
+    outputs_by_unit = Dict(uid => sort([k[2] for k in keys(history[1].y_hat) if k[1] == uid]) for uid in unit_ids)
 
     header = "tick"
-    for id in unit_ids
-        header *= @sprintf("  | %s: u_applied  y_hat  u_target", id)
+    for uid in unit_ids
+        for iid in inputs_by_unit[uid]
+            header *= @sprintf("  | %s.%s: applied  target", uid, iid)
+        end
+        for oid in outputs_by_unit[uid]
+            header *= @sprintf("  | %s.%s: y_hat", uid, oid)
+        end
     end
     println(io, header)
     println(io, "-"^length(header))
 
     for tick in history
         row = @sprintf("%4d", tick.tick)
-        for id in unit_ids
-            row *= @sprintf("  | %10.3f %10.3f %10.3f",
-                tick.u_applied[id], tick.y_hat[id], tick.u_target[id])
+        for uid in unit_ids
+            for iid in inputs_by_unit[uid]
+                row *= @sprintf("  | %8.3f %8.3f", tick.u_applied[(uid, iid)], tick.u_target[(uid, iid)])
+            end
+            for oid in outputs_by_unit[uid]
+                row *= @sprintf("  | %8.3f", tick.y_hat[(uid, oid)])
+            end
         end
         println(io, row)
     end

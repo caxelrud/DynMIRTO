@@ -402,3 +402,59 @@ whether `u`/`z` hold JuMP expressions (inside the LP) or plain `Float64`s
    constrained optimum, hand-derived.
 5. `run_real_time_loop` (no noise) drives the applied inputs toward that
    same constrained optimum over ticks, subject to the rate limit.
+
+### 10.6 Multivariable units
+
+The first version of this module only supported one input and one
+output per unit — a real simplification even relative to v3's own
+stated scope (section 10.2 already flagged general LTI/multivariable
+units as cut). This section extends `DynamicUnit` to the general case:
+one or more named inputs, one or more named outputs, related by a
+single nonlinear map `F: inputs -> outputs` (still reached via
+independent first-order dynamics per output — that part of the original
+scope cut stands).
+
+**What changes:**
+- `steady_state_gain` becomes `F(u::Dict{String,Float64}) -> Dict{String,Float64}`
+  instead of a scalar function — a unit can have inputs that each affect
+  *multiple* outputs (real cross-coupling, e.g. a distillation column
+  where both reflux and reboiler duty affect both top and bottoms
+  purity).
+- `tau`, `u_min`, `u_max`, `max_step` become `Dict`s keyed by output id
+  (for `tau`) or input id (for the rest), since different
+  inputs/outputs of the same unit can have different ranges, rate
+  limits, and response speeds.
+- Linearizing `F` now needs its full **Jacobian** (every output's
+  partial derivative with respect to every input), computed by finite
+  differences one input at a time — a single derivative is no longer
+  enough once an output can depend on more than one input.
+- Every `Dict` passed to `econ`/`constraints`, and every field of
+  `RealTimeTick`, is now keyed by `(unit_id, variable_id)` tuples
+  (matching the pattern v2's `Scheduling.jl` already uses for
+  `receipts`/`tank_levels`) instead of plain `unit_id` strings — this
+  is a breaking change from the original single-input/single-output
+  API, applied uniformly rather than special-cased for units that
+  happen to have exactly one input and one output.
+- A convenience constructor, `DynamicUnit(id, tau, gain; ...)`, keeps
+  the simple single-input/single-output case easy to write — it just
+  wraps the scalar function into the `Dict`-based interface with a
+  fixed input name `"u"` and output name `"y"`.
+
+**Why this matters, concretely**: a Jacobian that only captured each
+output's "own" partial derivative (ignoring cross-terms) would still
+run without erroring, but would converge to the *wrong* optimum on any
+unit with real coupling — silently. `test_dynamic_optimization.jl`
+includes a coupled two-input/two-output case (reflux/duty affecting
+both top and bottoms purity) with a hand-derived optimum specifically
+chosen so that dropping the off-diagonal Jacobian terms gives a
+different, wrong answer (45, 45) instead of the correct one
+(51, 53.33) — a test that would pass with a naive diagonal-only
+Jacobian is not actually testing the multivariable case.
+
+**Still not modeled**: interaction *dynamics* (e.g. one input's effect
+on an output arriving with a different time delay/lag shape than
+another input's effect on that same output — real transfer-function
+matrices can have off-diagonal dynamics, not just off-diagonal
+steady-state gains); the reconciliation step is still a per-output
+two-source weighted average, not a joint estimate across a unit's
+correlated outputs.

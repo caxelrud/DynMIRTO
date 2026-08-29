@@ -107,14 +107,23 @@ regenerated).
 
 ## Real-time dynamic optimization (v3)
 
-`scripts/run_dynamic_demo.jl` runs a small closed loop: two process
-units, each with a concave (diminishing-returns) steady-state yield
-curve reached via first-order dynamics, sharing a binding utility
-budget. Every tick it re-solves for the economic optimum from a noisy,
-reconciled state estimate — watch `u_target` lock onto the analytical
-optimum immediately (it only depends on the economics) while
-`u_applied` ramps there under each unit's real rate limit, and `y_hat`
-climbs toward the true steady-state output as the dynamics settle.
+`scripts/run_dynamic_demo.jl` runs a small closed loop with a mix of
+unit types:
+
+- Two single-input/single-output units, each with a concave
+  (diminishing-returns) steady-state yield curve, sharing a binding
+  utility budget.
+- One genuinely **multivariable** unit (`DynamicUnit` supports any
+  number of named inputs/outputs — see DESIGN.md section 10.6): a toy
+  2-input/2-output "distillation column" where reflux and reboiler duty
+  both affect *both* outputs (real cross-coupling), linearized via a
+  full Jacobian rather than one derivative per output.
+
+Every tick it re-solves for the economic optimum from a noisy,
+reconciled state estimate — watch each `target` lock onto its
+analytical optimum immediately (it only depends on the economics) while
+`applied` ramps there under that input's own rate limit, and `y_hat`
+climbs toward the true steady-state outputs as the dynamics settle.
 
 Unlike v1/v2, v3 scenarios are defined in Julia code, not JSON — see
 DESIGN.md section 10.2 for why. There's no notebook for v3 yet.
