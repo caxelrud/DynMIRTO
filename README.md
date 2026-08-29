@@ -53,6 +53,9 @@ julia --project=. scripts/run_dynamic_demo.jl
 # v1 <-> v3 connected: a unit's real-time output feeds v1's blend, whose
 # shadow prices feed back as the unit's live economic signal
 julia --project=. scripts/run_coordination_demo.jl
+
+# the same, but from a true cold start -- shows the deadlock fix (floor_price)
+julia --project=. scripts/run_coordination_coldstart_demo.jl
 ```
 
 ## Interactive notebook
@@ -153,11 +156,19 @@ filler, the blend always uses all of it, so its shadow price holds at
 exactly $40 (the cost of the filler it displaces) from tick 1 — watch
 that column stay pinned while the feed setpoint and production rate
 climb toward the hand-derived optimum (u\*=73.30, rate\*=90.0; see
-DESIGN.md section 11.3 for the derivation). A separate test starts the
-same reformer at its true minimum instead of a warm start, and finds a
-real, permanent deadlock rather than a slow recovery — a known
-limitation of pure shadow-price-driven coordination, documented (not
-hidden) in DESIGN.md section 11.5.
+DESIGN.md section 11.3 for the derivation).
+
+Starting the same reformer at its true minimum instead of a warm start
+exposes a real, permanent deadlock, not a slow recovery: an infeasible
+blend gives a price of exactly `$0`, and `$0` means zero incentive to
+ever produce more. `scripts/run_coordination_coldstart_demo.jl` shows
+the fix — `ComponentSource`'s `floor_price`, a minimum price used *only*
+while infeasible (never overriding a real shadow price), just large
+enough to bootstrap production back into feasibility, at which point
+the real $40 shadow price takes back over. Both the raw deadlock and
+the fix are covered in `test/test_coordination.jl`, and the full story
+(including why too-low a floor price still deadlocks) is in DESIGN.md
+section 11.5.
 
 v2 (tanks/scheduling) isn't connected yet — section 11.6.
 
@@ -179,6 +190,7 @@ scripts/
   run_schedule.jl            # CLI: run a v2 schedule file end to end
   run_dynamic_demo.jl        # CLI: run the v3 closed-loop demo end to end
   run_coordination_demo.jl   # CLI: run the v1<->v3 coordinated demo end to end
+  run_coordination_coldstart_demo.jl # CLI: same, but from a true cold start (shows the floor_price fix)
 notebooks/
   blend_explorer.jl            # interactive Pluto notebook (v1), linked to src/ (see above)
   blend_explorer_standalone.jl # same, but self-contained for zero-setup/phone use
@@ -199,6 +211,7 @@ correlations — see the comments there before using this for anything
 beyond demonstrating the mechanism. v3's scope cuts relative to the real
 GDOT technology are listed in DESIGN.md section 10.2 (single-input/
 single-output units, first-order dynamics only, simplified two-source
-reconciliation, and more). The v1↔v3 coordination layer has a real,
-documented cold-start deadlock (DESIGN.md section 11.5) and only
+reconciliation, and more). The v1↔v3 coordination layer's cold-start
+deadlock has a fix (`floor_price` — DESIGN.md section 11.5), but picking
+a good floor price is still a per-scenario judgment call, and it only
 optimizes a sourced component's volume, not its quality (section 11.4).

@@ -559,16 +559,26 @@ every sourced unit sees a price of exactly `0.0` that tick. At price
 zero, a unit's economic objective is strictly "produce nothing" (any
 `u > 0` only adds operating cost for zero revenue) — a self-reinforcing
 deadlock with no gradient pointing out of it, not a slow transient. The
-"cold start" test verifies this precise behavior (stays at exactly
-`u=0`, every tick infeasible) rather than a false claim that it
-recovers.
+"cold start with no floor_price" test verifies this precise behavior
+(stays at exactly `u=0`, every tick infeasible) rather than a false
+claim that it recovers.
 
 This is a known real issue for dual-value/shadow-price-driven
-coordination generally, not specific to this toy scenario. A real fix
-— not built here — would need something like a configurable minimum
-"floor price" per sourced component (an exploration incentive even
-when infeasible) or an explicit bootstrap/warm-up mode; both are
-future work.
+coordination generally, not specific to this toy scenario. **Fixed**:
+`ComponentSource` now carries a `floor_price` (default `0.0`, preserving
+the original behavior above when not set), used as the unit's price
+signal *only on ticks where the blend is infeasible* — a minimum
+exploration incentive, never overriding a real shadow price. It doesn't
+need to be the true equilibrium price, only large enough that the
+resulting production crosses back into feasibility; `scripts/run_coordination_coldstart_demo.jl`
+and its matching test use `floor_price=35.0` (not the true $40) to show
+exactly that handoff: the reformer ramps under the floor price alone
+while infeasible, crosses the ~66.67 threshold needed for the blend to
+solve again, and the real $40 shadow price immediately takes back over
+and continues on to the true optimum. Choosing a good floor price is
+still a per-scenario judgment call (too low never escapes the deadlock,
+as the same math shows for `floor_price=20` or `28.8`); an explicit
+bootstrap/warm-up mode is a further alternative, not built.
 
 ### 11.6 Not yet connected: v2
 

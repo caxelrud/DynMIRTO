@@ -30,11 +30,23 @@ its available volume this tick. The component's *quality* properties
 stay static (v1's usual assumption) -- only how much of it exists is
 under real-time control. `component_id` must match a `Component.id` in
 `sourced_component_templates`.
+
+`floor_price` is used as the unit's price signal *only on ticks where
+the blend is infeasible* (never overriding a real shadow price), as a
+minimum exploration incentive -- see DESIGN.md section 11.5. It
+defaults to `0.0`, the original behavior: with no floor price, an
+infeasible blend gives zero incentive to produce more, which is a real,
+permanent deadlock if the unit starts from a state where it's needed
+but not yet available (nothing in the objective ever points a way out).
 """
 struct ComponentSource
     component_id::String
     unit_id::String
     rate_output_id::String
+    floor_price::Float64
+
+    ComponentSource(component_id, unit_id, rate_output_id; floor_price=0.0) =
+        new(component_id, unit_id, rate_output_id, Float64(floor_price))
 end
 
 """
@@ -147,10 +159,16 @@ function run_coordinated_loop(
         blend_result = optimize_blend(live_components, products; optimizer=optimizer)
 
         # 3. Translate shadow prices into a fresh econ() for this tick.
+        #    On an infeasible tick there is no real shadow price to read;
+        #    fall back to each source's floor_price (0.0 by default,
+        #    preserving the original deadlock-prone behavior) instead of a
+        #    bare 0.0, so a unit can have a real incentive to produce its
+        #    way back to feasibility.
         function econ(u, z)
             total = 0.0
             for s in sources
-                price = get(blend_result.component_shadow_prices, s.component_id, 0.0)
+                price = blend_result.status == :optimal ?
+                    get(blend_result.component_shadow_prices, s.component_id, 0.0) : s.floor_price
                 total += price * z[(s.unit_id, s.rate_output_id)]
             end
             for unit in units, iid in unit.input_ids

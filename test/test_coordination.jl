@@ -61,19 +61,20 @@ using Random
         @test isapprox(ref_used, last_tick.unit_tick.y_hat[("REFORMER", "y")]; atol=1e-6)
     end
 
-    @testset "cold start: a real deadlock, not a crash" begin
+    @testset "cold start with no floor_price: a real deadlock, not a crash" begin
         statics, templates, sources, units, opcost, products = build_scenario()
 
         # u starts at the unit's u_min (0 by default), so REF's initial
         # availability is 0 and the first tick's blend cannot reach the
         # octane spec using only FILL (RON 80 < 90). This is a genuine
         # limitation of pure shadow-price-driven coordination, discovered
-        # by running this scenario (not assumed away): an infeasible blend
-        # falls back to a price of exactly 0.0 for every sourced component,
-        # so the reformer's economic objective becomes strictly "produce
-        # nothing" (any u > 0 only adds cost for zero revenue) -- a
-        # self-reinforcing deadlock with no gradient pointing out of it, not
-        # a transient it ramps out of. See DESIGN.md section 11.5.
+        # by running this scenario (not assumed away): with the default
+        # floor_price=0.0, an infeasible blend gives every sourced
+        # component a price of exactly 0.0, so the reformer's economic
+        # objective becomes strictly "produce nothing" (any u > 0 only adds
+        # cost for zero revenue) -- a self-reinforcing deadlock with no
+        # gradient pointing out of it, not a transient it ramps out of.
+        # See DESIGN.md section 11.5. (The next test shows the fix.)
         #
         # This test verifies that behavior precisely (no crash, no silent
         # wrong answer): it should stay pinned at u=0 for the whole run.
@@ -82,6 +83,38 @@ using Random
         @test length(history) == 20
         @test all(t -> t.blend_result.status == :infeasible, history)
         @test all(t -> isapprox(t.unit_tick.u_applied[("REFORMER", "u")], 0.0; atol=1e-9), history)
+    end
+
+    @testset "cold start with a floor_price: escapes the deadlock" begin
+        # Same cold start (u_min=0), but REF's ComponentSource now carries
+        # floor_price=35.0 -- used only on infeasible ticks, as a minimum
+        # incentive to keep producing instead of a bare 0.0.
+        #
+        # Hand-derived (checked independently before writing this test):
+        # maximizing a *constant* price of 35 against the same operating
+        # cost settles at u=62.62, rate=81.43 -- comfortably above the
+        # 66.67 threshold needed for the blend to become feasible again.
+        # 35 was deliberately chosen *not* to equal the true equilibrium
+        # price of 40, to show the mechanism only needs to be "good enough
+        # to bootstrap": once feasible, the real shadow price (still $40,
+        # by the same displaces-FILL logic as the warm-start test) takes
+        # back over and keeps pushing past 81.43 to the true optimum.
+        statics, templates, sources0, units, opcost, products = build_scenario()
+        sources = [ComponentSource(s.component_id, s.unit_id, s.rate_output_id; floor_price=35.0) for s in sources0]
+
+        history = run_coordinated_loop(statics, templates, sources, units, opcost, products; n_ticks=40, dt=1.0)
+
+        @test length(history) == 40
+        @test history[1].blend_result.status == :infeasible
+        # once it reaches feasibility, it must never fall back out of it
+        first_optimal = findfirst(t -> t.blend_result.status == :optimal, history)
+        @test first_optimal !== nothing
+        @test all(t -> t.blend_result.status == :optimal, history[first_optimal:end])
+
+        last_tick = history[end]
+        @test isapprox(last_tick.unit_tick.u_applied[("REFORMER", "u")], 73.297; atol=0.5)
+        @test isapprox(last_tick.unit_tick.y_hat[("REFORMER", "y")], 90.0; atol=1.0)
+        @test isapprox(last_tick.blend_result.component_shadow_prices["REF"], 40.0; atol=1e-6)
     end
 
     @testset "with measurement noise, still settles near the equilibrium" begin
